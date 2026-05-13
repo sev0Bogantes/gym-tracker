@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react'
 import Link from 'next/link'
 import {
   ChevronDown, ChevronUp, Plus, Minus, Upload,
-  Dumbbell, Calendar, TrendingUp, Check, Zap,
+  Dumbbell, Calendar, TrendingUp, Check, Zap, Edit2
 } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -20,6 +20,7 @@ type Exercise = {
   initial_weight: number | null
   notes: string | null
   order_index: number
+  superset_id: string | null
 }
 
 type RoutineDay = {
@@ -75,12 +76,22 @@ export default function DashboardClient({
     () => new Set(routine?.routine_days.map((d) => d.id) ?? [])
   )
 
-  // Per-exercise: weight in KG (source of truth), unit, saving state
+  // Per-exercise state
   const [weights, setWeights] = useState<Record<string, number>>(() => {
     const init: Record<string, number> = {}
     routine?.routine_days.flatMap((d) => d.exercises).forEach((ex) => {
       init[ex.id] = ex.target_weight ?? ex.initial_weight ?? 0
     })
+    return init
+  })
+  const [sets, setSets] = useState<Record<string, number>>(() => {
+    const init: Record<string, number> = {}
+    routine?.routine_days.flatMap((d) => d.exercises).forEach((ex) => { init[ex.id] = ex.sets })
+    return init
+  })
+  const [reps, setReps] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {}
+    routine?.routine_days.flatMap((d) => d.exercises).forEach((ex) => { init[ex.id] = ex.reps })
     return init
   })
   const [units, setUnits] = useState<Record<string, Unit>>({})
@@ -109,17 +120,27 @@ export default function DashboardClient({
     setSaved((prev) => ({ ...prev, [exId]: false }))
   }
 
+  function handleSetChange(exId: string, val: number) {
+    setSets((prev) => ({ ...prev, [exId]: Math.max(1, val) }))
+    setSaved((prev) => ({ ...prev, [exId]: false }))
+  }
+
+  function handleRepChange(exId: string, val: string) {
+    setReps((prev) => ({ ...prev, [exId]: val }))
+    setSaved((prev) => ({ ...prev, [exId]: false }))
+  }
+
   function changeUnit(exId: string, unit: Unit) {
     setUnits((prev) => ({ ...prev, [exId]: unit }))
   }
 
-  async function saveWeight(exId: string) {
+  async function saveExercise(exId: string) {
     setSaving((prev) => ({ ...prev, [exId]: true }))
     const kg = weights[exId] ?? 0
     await fetch(`/api/exercises/${exId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ targetWeight: kg }),
+      body: JSON.stringify({ targetWeight: kg, sets: sets[exId], reps: reps[exId] }),
     })
     setSaving((prev) => ({ ...prev, [exId]: false }))
     setSaved((prev) => ({ ...prev, [exId]: true }))
@@ -156,14 +177,24 @@ export default function DashboardClient({
   return (
     <div className="container page-pad">
       {/* Header */}
-      <header style={{ paddingTop: '1.5rem', marginBottom: '1.5rem' }}>
-        <p style={{
-          color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 600,
-          letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: '0.25rem',
-        }}>
-          {getGreeting()}
-        </p>
-        <h1 style={{ fontSize: '1.65rem' }}>{routine.name}</h1>
+      <header style={{ paddingTop: '1.5rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <div>
+          <p style={{
+            color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 600,
+            letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: '0.25rem',
+          }}>
+            {getGreeting()}
+          </p>
+          <h1 style={{ fontSize: '1.65rem' }}>{routine.name}</h1>
+        </div>
+        <Link 
+          href={`/routine/${routine.id}/build`}
+          className="btn btn-ghost btn-sm"
+          style={{ gap: '0.4rem', padding: '0.4rem 0.6rem' }}
+        >
+          <Edit2 size={14} />
+          <span style={{ fontSize: '0.75rem' }}>Edit Routine</span>
+        </Link>
       </header>
 
       {/* Week progress card */}
@@ -272,131 +303,206 @@ export default function DashboardClient({
               {/* Exercises list */}
               {isOpen && (
                 <div style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                  {day.exercises.map((ex, idx) => {
-                    const unit = getUnit(ex.id)
-                    const weightKg = weights[ex.id] ?? 0
-                    const displayVal = toDisplay(weightKg, unit)
-                    const lastKg = lastWeekLogs[ex.id]
-                    const lastDisplay = lastKg != null ? toDisplay(lastKg, unit) : null
-                    const thisKg = thisWeekLogs[ex.id]
-                    const thisDisplay = thisKg != null ? toDisplay(thisKg, unit) : null
-                    const isSaving = saving[ex.id]
-                    const isSaved = saved[ex.id]
-                    const isLast = idx === day.exercises.length - 1
+                  {(() => {
+                    // Group supersets
+                    const groups: Exercise[][] = []
+                    let currentGroupId: string | null = null
+                    let currentGroup: Exercise[] = []
+                    for (const ex of day.exercises) {
+                      if (ex.superset_id && ex.superset_id === currentGroupId) {
+                        currentGroup.push(ex)
+                      } else {
+                        if (currentGroup.length > 0) groups.push(currentGroup)
+                        currentGroup = [ex]
+                        currentGroupId = ex.superset_id ?? null
+                      }
+                    }
+                    if (currentGroup.length > 0) groups.push(currentGroup)
 
-                    return (
-                      <div
-                        key={ex.id}
-                        style={{
-                          padding: '0.75rem 1rem',
-                          borderBottom: isLast ? 'none' : '1px solid var(--border-subtle)',
-                        }}
-                      >
-                        {/* Exercise name + meta */}
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.55rem', gap: '0.5rem' }}>
-                          <p style={{ fontWeight: 600, fontSize: '0.88rem', flex: 1, minWidth: 0 }}>
-                            {ex.name}
-                          </p>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', flexShrink: 0 }}>
-                            <span className="badge badge-blue" style={{ fontSize: '0.65rem' }}>{ex.sets}×{ex.reps}</span>
-                            {ex.notes && (
-                              <span title={ex.notes} style={{ fontSize: '0.75rem', cursor: 'default' }}>💬</span>
-                            )}
-                          </div>
-                        </div>
+                    return groups.map((group, gIdx) => {
+                      const isSuperset = group.length > 1
+                      const isLastGroup = gIdx === groups.length - 1
 
-                        {/* Weight row: − value + | unit | save — fits 393px */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          {/* Minus */}
-                          <button
-                            className="btn btn-ghost"
-                            style={{ width: 36, height: 36, padding: 0, borderRadius: '50%', flexShrink: 0, border: '1px solid var(--border)' }}
-                            onClick={() => adjustWeight(ex.id, -5)}
-                            aria-label="-5"
-                          >
-                            <Minus size={15} />
-                          </button>
+                      return (
+                        <div
+                          key={`group-${gIdx}`}
+                          style={{
+                            padding: isSuperset ? '0.75rem 0' : '0.75rem 1rem',
+                            borderBottom: isLastGroup ? 'none' : '1px solid var(--border-subtle)',
+                            background: isSuperset ? 'var(--bg-surface)' : 'transparent',
+                          }}
+                        >
+                          {isSuperset && (
+                            <div style={{ padding: '0 1rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <span className="badge" style={{ background: 'var(--accent)', color: '#fff' }}>SUPERSET</span>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Swipe →</span>
+                            </div>
+                          )}
 
-                          {/* Weight value */}
                           <div style={{
-                            flex: 1, textAlign: 'center', background: 'var(--bg-surface)',
-                            borderRadius: 'var(--radius-sm)', padding: '0.3rem 0.25rem',
-                            border: '1px solid var(--border)', minWidth: 0,
+                            display: isSuperset ? 'flex' : 'block',
+                            overflowX: isSuperset ? 'auto' : 'visible',
+                            scrollSnapType: isSuperset ? 'x mandatory' : 'none',
+                            gap: '1rem',
+                            padding: isSuperset ? '0 1rem' : '0',
+                            WebkitOverflowScrolling: 'touch',
+                            scrollbarWidth: 'none',
                           }}>
-                            <span style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1 }}>
-                              {fmt(displayVal)}
-                            </span>
+                            {group.map((ex) => {
+                              const unit = getUnit(ex.id)
+                              const weightKg = weights[ex.id] ?? 0
+                              const displayVal = toDisplay(weightKg, unit)
+                              const lastKg = lastWeekLogs[ex.id]
+                              const lastDisplay = lastKg != null ? toDisplay(lastKg, unit) : null
+                              const thisKg = thisWeekLogs[ex.id]
+                              const thisDisplay = thisKg != null ? toDisplay(thisKg, unit) : null
+                              const isSaving = saving[ex.id]
+                              const isSaved = saved[ex.id]
+
+                              return (
+                                <div
+                                  key={ex.id}
+                                  style={{
+                                    flexShrink: 0,
+                                    width: isSuperset ? '85vw' : '100%',
+                                    maxWidth: isSuperset ? '340px' : 'none',
+                                    scrollSnapAlign: 'start',
+                                    background: isSuperset ? 'var(--bg-card)' : 'transparent',
+                                    borderRadius: isSuperset ? 'var(--radius)' : 0,
+                                    padding: isSuperset ? '1rem' : 0,
+                                    border: isSuperset ? '1px solid var(--border-subtle)' : 'none',
+                                  }}
+                                >
+                                  {/* Exercise name + meta */}
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem', gap: '0.5rem' }}>
+                                    <p style={{ fontWeight: 600, fontSize: '0.88rem', flex: 1, minWidth: 0 }}>
+                                      {ex.name}
+                                    </p>
+                                    {ex.notes && (
+                                      <span title={ex.notes} style={{ fontSize: '0.75rem', cursor: 'default' }}>💬</span>
+                                    )}
+                                  </div>
+
+                                  {/* Sets/Reps inline edit row */}
+                                  <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--bg-surface)', padding: '0.3rem 0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Sets</span>
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        value={sets[ex.id] ?? ex.sets}
+                                        onChange={(e) => handleSetChange(ex.id, parseInt(e.target.value) || 1)}
+                                        style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', fontSize: '0.9rem', fontWeight: 600, width: '100%', outline: 'none' }}
+                                      />
+                                    </div>
+                                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--bg-surface)', padding: '0.3rem 0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Reps</span>
+                                      <input
+                                        type="text"
+                                        value={reps[ex.id] ?? ex.reps}
+                                        onChange={(e) => handleRepChange(ex.id, e.target.value)}
+                                        style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', fontSize: '0.9rem', fontWeight: 600, width: '100%', outline: 'none' }}
+                                      />
+                                    </div>
+                                  </div>
+
+                                  {/* Weight row: − value + | unit | save — fits 393px */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    {/* Minus */}
+                                    <button
+                                      className="btn btn-ghost"
+                                      style={{ width: 36, height: 36, padding: 0, borderRadius: '50%', flexShrink: 0, border: '1px solid var(--border)' }}
+                                      onClick={() => adjustWeight(ex.id, -5)}
+                                      aria-label="-5"
+                                    >
+                                      <Minus size={15} />
+                                    </button>
+
+                                    {/* Weight value */}
+                                    <div style={{
+                                      flex: 1, textAlign: 'center', background: 'var(--bg-surface)',
+                                      borderRadius: 'var(--radius-sm)', padding: '0.3rem 0.25rem',
+                                      border: '1px solid var(--border)', minWidth: 0,
+                                    }}>
+                                      <span style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1 }}>
+                                        {fmt(displayVal)}
+                                      </span>
+                                    </div>
+
+                                    {/* Plus */}
+                                    <button
+                                      className="btn btn-ghost"
+                                      style={{ width: 36, height: 36, padding: 0, borderRadius: '50%', flexShrink: 0, border: '1px solid var(--border)' }}
+                                      onClick={() => adjustWeight(ex.id, 5)}
+                                      aria-label="+5"
+                                    >
+                                      <Plus size={15} />
+                                    </button>
+
+                                    {/* Unit dropdown */}
+                                    <select
+                                      value={unit}
+                                      onChange={(e) => changeUnit(ex.id, e.target.value as Unit)}
+                                      aria-label="unit"
+                                      style={{
+                                        background: 'var(--bg-surface)',
+                                        border: '1px solid var(--border)',
+                                        borderRadius: 'var(--radius-sm)',
+                                        color: 'var(--text-primary)',
+                                        fontFamily: 'inherit',
+                                        fontSize: '0.75rem',
+                                        fontWeight: 700,
+                                        padding: '0.3rem 0.4rem',
+                                        cursor: 'pointer',
+                                        flexShrink: 0,
+                                        width: 46,
+                                        appearance: 'none',
+                                        WebkitAppearance: 'none',
+                                        textAlign: 'center',
+                                      }}
+                                    >
+                                      <option value="kg">kg</option>
+                                      <option value="lbs">lbs</option>
+                                    </select>
+
+                                    {/* Save — icon only to save width */}
+                                    <button
+                                      className={`btn ${isSaved ? 'btn-success' : 'btn-primary'}`}
+                                      style={{ width: 36, height: 36, padding: 0, borderRadius: 'var(--radius-sm)', flexShrink: 0 }}
+                                      onClick={() => saveExercise(ex.id)}
+                                      disabled={isSaving}
+                                      aria-label="Save changes"
+                                    >
+                                      {isSaving
+                                        ? <span className="spinner" style={{ width: 13, height: 13 }} />
+                                        : <Check size={15} />
+                                      }
+                                    </button>
+                                  </div>
+
+                                  {/* History comparison */}
+                                  <div style={{ display: 'flex', gap: '1rem', marginTop: '0.65rem', flexWrap: 'wrap' }}>
+                                    {thisDisplay != null && (
+                                      <span style={{ fontSize: '0.72rem', color: 'var(--neon-green)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--neon-green)', display: 'inline-block' }} />
+                                        This week: {fmt(thisDisplay)} {unit}
+                                      </span>
+                                    )}
+                                    {lastDisplay != null && (
+                                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                        <TrendingUp size={11} />
+                                        Last week: {fmt(lastDisplay)} {unit}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              )
+                            })}
                           </div>
-
-                          {/* Plus */}
-                          <button
-                            className="btn btn-ghost"
-                            style={{ width: 36, height: 36, padding: 0, borderRadius: '50%', flexShrink: 0, border: '1px solid var(--border)' }}
-                            onClick={() => adjustWeight(ex.id, 5)}
-                            aria-label="+5"
-                          >
-                            <Plus size={15} />
-                          </button>
-
-                          {/* Unit dropdown */}
-                          <select
-                            value={unit}
-                            onChange={(e) => changeUnit(ex.id, e.target.value as Unit)}
-                            aria-label="unit"
-                            style={{
-                              background: 'var(--bg-surface)',
-                              border: '1px solid var(--border)',
-                              borderRadius: 'var(--radius-sm)',
-                              color: 'var(--text-primary)',
-                              fontFamily: 'inherit',
-                              fontSize: '0.75rem',
-                              fontWeight: 700,
-                              padding: '0.3rem 0.4rem',
-                              cursor: 'pointer',
-                              flexShrink: 0,
-                              width: 46,
-                              appearance: 'none',
-                              WebkitAppearance: 'none',
-                              textAlign: 'center',
-                            }}
-                          >
-                            <option value="kg">kg</option>
-                            <option value="lbs">lbs</option>
-                          </select>
-
-                          {/* Save — icon only to save width */}
-                          <button
-                            className={`btn ${isSaved ? 'btn-success' : 'btn-primary'}`}
-                            style={{ width: 36, height: 36, padding: 0, borderRadius: 'var(--radius-sm)', flexShrink: 0 }}
-                            onClick={() => saveWeight(ex.id)}
-                            disabled={isSaving}
-                            aria-label="Save target weight"
-                          >
-                            {isSaving
-                              ? <span className="spinner" style={{ width: 13, height: 13 }} />
-                              : <Check size={15} />
-                            }
-                          </button>
                         </div>
-
-                        {/* History comparison */}
-                        <div style={{ display: 'flex', gap: '1rem', marginTop: '0.55rem', flexWrap: 'wrap' }}>
-                          {thisDisplay != null && (
-                            <span style={{ fontSize: '0.72rem', color: 'var(--neon-green)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                              <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--neon-green)', display: 'inline-block' }} />
-                              This week: {fmt(thisDisplay)} {unit}
-                            </span>
-                          )}
-                          {lastDisplay != null && (
-                            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                              <TrendingUp size={11} />
-                              Last week: {fmt(lastDisplay)} {unit}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
+                      )
+                    })
+                  })()}
                 </div>
               )}
             </div>

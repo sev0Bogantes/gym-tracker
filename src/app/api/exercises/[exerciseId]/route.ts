@@ -42,6 +42,7 @@ export async function PATCH(
         target_weight: body.targetWeight ?? body.initialWeight ?? null,
         category: body.category ?? 'General',
         notes: body.notes ?? null,
+        superset_id: body.supersetId ?? null,
       }
       const { data, error } = await supabase
         .from('exercises')
@@ -53,11 +54,20 @@ export async function PATCH(
     }
 
     // Quick target weight update (from dashboard)
-    const { targetWeight } = body
-    if (targetWeight === undefined || targetWeight === null) {
-      return NextResponse.json({ error: 'targetWeight required' }, { status: 400 })
+    const { targetWeight, sets, reps } = body
+    if (targetWeight === undefined && sets === undefined && reps === undefined) {
+      return NextResponse.json({ error: 'targetWeight, sets, or reps required' }, { status: 400 })
     }
-    await updateTargetWeight(supabase, exerciseId, Number(targetWeight))
+    
+    const updateObj: Record<string, any> = {}
+    if (targetWeight !== undefined && targetWeight !== null) updateObj.target_weight = Number(targetWeight)
+    if (sets !== undefined && sets !== null) updateObj.sets = Number(sets)
+    if (reps !== undefined && reps !== null) updateObj.reps = String(reps)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await supabase.from('exercises').update(updateObj as any).eq('id', exerciseId)
+    if (error) throw error
+    
     return NextResponse.json({ success: true })
   } catch (err) {
     return NextResponse.json({ error: 'Failed to update' }, { status: 500 })

@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
       category: category ?? 'General',
       notes: notes ?? null,
       order_index: orderIndex ?? 0,
+      superset_id: body.supersetId ?? null,
     }
     const { data: exercise, error } = await supabase
       .from('exercises')

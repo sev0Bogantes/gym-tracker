@@ -47,7 +47,8 @@ export default async function DashboardPage() {
 
   return (
     <DashboardClient
-      routine={routine}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      routine={routine as any}
       currentWeek={currentWeek}
       progressPct={progressPct}
       lastWeekLogs={lastWeekLogs}

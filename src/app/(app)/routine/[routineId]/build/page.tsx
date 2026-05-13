@@ -25,6 +25,7 @@ type Exercise = {
   category: string | null
   notes: string | null
   order_index: number
+  superset_id: string | null
 }
 
 type Day = {
@@ -49,14 +50,16 @@ const EMPTY_EX: ExerciseFormState = {
 }
 
 function ExerciseForm({
-  initial, onSave, onCancel, saving,
+  initial, onSave, onCancel, saving, canGroupPrevious
 }: {
   initial?: ExerciseFormState
-  onSave: (f: ExerciseFormState) => void
+  onSave: (f: ExerciseFormState, groupPrevious: boolean) => void
   onCancel: () => void
   saving: boolean
+  canGroupPrevious?: boolean
 }) {
   const [form, setForm] = useState<ExerciseFormState>(initial ?? EMPTY_EX)
+  const [groupPrevious, setGroupPrevious] = useState(false)
   const set = (k: keyof ExerciseFormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm((p) => ({ ...p, [k]: e.target.value }))
 
@@ -114,12 +117,19 @@ function ExerciseForm({
         <input id="ex-notes" className="input" placeholder="e.g. slow on the way down" value={form.notes} onChange={set('notes')} />
       </div>
 
+      {canGroupPrevious && !initial && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.2rem' }}>
+          <input type="checkbox" id="group-prev" checked={groupPrevious} onChange={(e) => setGroupPrevious(e.target.checked)} />
+          <label htmlFor="group-prev" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Group with previous exercise (Superset)</label>
+        </div>
+      )}
+
       {/* Buttons */}
       <div style={{ display: 'flex', gap: '0.6rem', marginTop: '0.2rem' }}>
         <button
           className="btn btn-primary btn-full"
           disabled={saving || !form.name.trim()}
-          onClick={() => onSave(form)}
+          onClick={() => onSave(form, groupPrevious)}
           style={{ flex: 1 }}
         >
           {saving ? <><span className="spinner" style={{ width: 14, height: 14 }} />Saving…</> : <><Check size={15} />{initial ? 'Update' : 'Add Exercise'}</>}
@@ -142,6 +152,12 @@ export default function RoutineBuilderPage() {
   const [days, setDays] = useState<Day[]>([])
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
+
+  // Routine global form
+  const [editingRoutine, setEditingRoutine] = useState(false)
+  const [routineName, setRoutineName] = useState('')
+  const [routineWeeks, setRoutineWeeks] = useState('')
+  const [savingRoutine, setSavingRoutine] = useState(false)
 
   // Day form
   const [showDayForm, setShowDayForm] = useState(false)
@@ -180,7 +196,11 @@ export default function RoutineBuilderPage() {
     const allRes = await fetch('/api/routines')
     const allData = await allRes.json()
     const found = (allData.routines ?? []).find((r: Routine) => r.id === routineId)
-    if (found) setRoutine(found)
+    if (found) {
+      setRoutine(found)
+      setRoutineName(found.name)
+      setRoutineWeeks(String(found.total_weeks ?? 8))
+    }
 
     // Expand all days by default
     setExpandedDays(new Set(loadedDays.map((d: Day) => d.id)))
@@ -227,9 +247,25 @@ export default function RoutineBuilderPage() {
 
   // ─── Add Exercise ──────────────────────────────────────────────────────────
 
-  async function handleAddExercise(dayId: string, form: ExerciseFormState) {
+  async function handleAddExercise(dayId: string, form: ExerciseFormState, groupPrevious: boolean) {
     setSavingEx((p) => ({ ...p, [dayId]: true }))
     const day = days.find((d) => d.id === dayId)!
+
+    let finalSupersetId = null
+    if (groupPrevious && day.exercises.length > 0) {
+      const prevEx = day.exercises[day.exercises.length - 1]
+      if (prevEx.superset_id) {
+        finalSupersetId = prevEx.superset_id
+      } else {
+        finalSupersetId = crypto.randomUUID()
+        // Update previous exercise to share the new superset ID
+        await fetch(`/api/exercises/${prevEx.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ supersetId: finalSupersetId })
+        })
+      }
+    }
 
     const res = await fetch('/api/exercises', {
       method: 'POST',
@@ -244,15 +280,21 @@ export default function RoutineBuilderPage() {
         category: form.category || 'General',
         notes: form.notes.trim() || null,
         orderIndex: day.exercises.length,
+        supersetId: finalSupersetId,
       }),
     })
     const data = await res.json()
     setSavingEx((p) => ({ ...p, [dayId]: false }))
 
     if (res.ok) {
-      setDays((prev) => prev.map((d) =>
-        d.id === dayId ? { ...d, exercises: [...d.exercises, data.exercise] } : d
-      ))
+      setDays((prev) => prev.map((d) => {
+        if (d.id !== dayId) return d
+        const newExercises = [...d.exercises]
+        if (finalSupersetId && newExercises.length > 0 && !newExercises[newExercises.length - 1].superset_id) {
+          newExercises[newExercises.length - 1] = { ...newExercises[newExercises.length - 1], superset_id: finalSupersetId }
+        }
+        return { ...d, exercises: [...newExercises, data.exercise] }
+      }))
       setShowExForm((p) => ({ ...p, [dayId]: false }))
     }
   }
@@ -298,6 +340,27 @@ export default function RoutineBuilderPage() {
     ))
   }
 
+  // ─── Edit Global Routine ───────────────────────────────────────────────────
+
+  async function handleSaveRoutine() {
+    if (!routineName.trim()) return
+    setSavingRoutine(true)
+    const res = await fetch(`/api/routines/${routineId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: routineName.trim(),
+        totalWeeks: Number(routineWeeks) || 8,
+      }),
+    })
+    const data = await res.json()
+    setSavingRoutine(false)
+    if (res.ok) {
+      setRoutine(data.routine)
+      setEditingRoutine(false)
+    }
+  }
+
   // ─── Render ────────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -314,12 +377,47 @@ export default function RoutineBuilderPage() {
     <div className="container" style={{ paddingTop: '1.5rem', paddingBottom: '7rem' }}>
       {/* Header */}
       <div style={{ marginBottom: '1.5rem' }}>
-        <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.2rem' }}>
-          Step 2 of 2 — Build your days
-        </p>
-        <h1 style={{ fontSize: '1.5rem', marginBottom: '0.2rem' }}>{routine?.name ?? 'Routine'}</h1>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.2rem' }}>
+          <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Step 2 of 2 — Build your days
+          </p>
+          {!editingRoutine && (
+            <button className="btn btn-ghost btn-sm" onClick={() => setEditingRoutine(true)} style={{ padding: '0.2rem 0.5rem', height: 'auto', fontSize: '0.72rem', gap: '0.3rem' }}>
+              <Edit2 size={12} /> Edit Detail
+            </button>
+          )}
+        </div>
+        
+        {editingRoutine ? (
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem', alignItems: 'center' }}>
+            <input 
+              className="input" 
+              value={routineName} 
+              onChange={(e) => setRoutineName(e.target.value)} 
+              placeholder="Routine Name"
+              style={{ flex: 1, padding: '0.4rem 0.6rem', fontSize: '0.9rem' }}
+            />
+            <input 
+              type="number"
+              className="input" 
+              value={routineWeeks} 
+              onChange={(e) => setRoutineWeeks(e.target.value)} 
+              placeholder="Weeks"
+              style={{ width: 70, padding: '0.4rem 0.6rem', fontSize: '0.9rem' }}
+            />
+            <button className="btn btn-primary btn-sm" onClick={handleSaveRoutine} disabled={savingRoutine}>
+              {savingRoutine ? <span className="spinner" style={{ width: 12, height: 12 }} /> : <Check size={14} />}
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setEditingRoutine(false)} disabled={savingRoutine}>
+              <X size={14} />
+            </button>
+          </div>
+        ) : (
+          <h1 style={{ fontSize: '1.5rem', marginBottom: '0.2rem' }}>{routine?.name ?? 'Routine'}</h1>
+        )}
+        
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-          {days.length} day{days.length !== 1 ? 's' : ''} · {totalExercises} exercise{totalExercises !== 1 ? 's' : ''}
+          {routine?.total_weeks ?? 8} weeks · {days.length} day{days.length !== 1 ? 's' : ''} · {totalExercises} exercise{totalExercises !== 1 ? 's' : ''}
         </p>
       </div>
 
@@ -377,13 +475,47 @@ export default function RoutineBuilderPage() {
               {/* Exercises */}
               {isOpen && (
                 <div style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                  {day.exercises.map((ex, idx) => {
-                    const isEditing = editingEx[ex.id] !== undefined && editingEx[ex.id] !== null
-                    return (
-                      <div key={ex.id} style={{
-                        padding: '0.75rem 1rem',
-                        borderBottom: idx < day.exercises.length - 1 ? '1px solid var(--border-subtle)' : 'none',
-                      }}>
+                  {(() => {
+                    const groups: Exercise[][] = []
+                    let currentGroupId: string | null = null
+                    let currentGroup: Exercise[] = []
+                    for (const ex of day.exercises) {
+                      if (ex.superset_id && ex.superset_id === currentGroupId) {
+                        currentGroup.push(ex)
+                      } else {
+                        if (currentGroup.length > 0) groups.push(currentGroup)
+                        currentGroup = [ex]
+                        currentGroupId = ex.superset_id ?? null
+                      }
+                    }
+                    if (currentGroup.length > 0) groups.push(currentGroup)
+
+                    return groups.map((group, gIdx) => {
+                      const isSuperset = group.length > 1
+                      const isLastGroup = gIdx === groups.length - 1
+
+                      return (
+                        <div key={`group-${gIdx}`} style={{
+                          padding: isSuperset ? '0.75rem 0' : 0,
+                          borderBottom: isLastGroup ? 'none' : '1px solid var(--border-subtle)',
+                          background: isSuperset ? 'var(--bg-surface)' : 'transparent',
+                        }}>
+                          {isSuperset && (
+                            <div style={{ padding: '0 1rem', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <span className="badge" style={{ background: 'var(--accent)', color: '#fff', fontSize: '0.65rem' }}>SUPERSET</span>
+                            </div>
+                          )}
+
+                          <div style={{ display: 'flex', flexDirection: 'column' }}>
+                            {group.map((ex, idx) => {
+                              const isEditing = editingEx[ex.id] !== undefined && editingEx[ex.id] !== null
+                              const isLastInGroup = idx === group.length - 1
+
+                              return (
+                                <div key={ex.id} style={{
+                                  padding: '0.75rem 1rem',
+                                  borderBottom: (!isSuperset && !isLastGroup) || (isSuperset && !isLastInGroup) ? '1px solid var(--border-subtle)' : 'none',
+                                }}>
                         {isEditing ? (
                           <ExerciseForm
                             initial={{
@@ -432,16 +564,22 @@ export default function RoutineBuilderPage() {
                           </div>
                         )}
                       </div>
-                    )
-                  })}
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )
+                    })
+                  })()}
 
                   {/* Add exercise inline */}
                   <div style={{ padding: '0.75rem 1rem', borderTop: day.exercises.length > 0 ? '1px solid var(--border-subtle)' : 'none' }}>
                     {showExForm[day.id] ? (
                       <ExerciseForm
-                        onSave={(f) => handleAddExercise(day.id, f)}
+                        onSave={(f, grp) => handleAddExercise(day.id, f, grp)}
                         onCancel={() => setShowExForm((p) => ({ ...p, [day.id]: false }))}
                         saving={!!savingEx[day.id]}
+                        canGroupPrevious={day.exercises.length > 0}
                       />
                     ) : (
                       <button
