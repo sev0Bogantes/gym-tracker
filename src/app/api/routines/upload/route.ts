@@ -17,11 +17,11 @@ export async function POST(request: NextRequest) {
     const startDate = formData.get('startDate') as string | null
     const routineName = formData.get('routineName') as string | null
     const totalWeeks = Number(formData.get('totalWeeks') ?? 8)
+    const debugMode = formData.get('debug') === 'true'
 
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 })
     }
-
     if (!startDate) {
       return NextResponse.json({ error: 'Start date is required' }, { status: 400 })
     }
@@ -29,6 +29,27 @@ export async function POST(request: NextRequest) {
     const buffer = await file.arrayBuffer()
     const parsed = parseExcelRoutine(buffer)
     parsed.totalWeeks = totalWeeks
+
+    // Return debug info without saving if requested
+    if (debugMode) {
+      return NextResponse.json({
+        debug: parsed.debug,
+        parsedDays: parsed.days.length,
+        days: parsed.days.map((d) => ({
+          name: d.name,
+          exerciseCount: d.exercises.length,
+          exercises: d.exercises.slice(0, 3).map((e) => e.name),
+        })),
+      })
+    }
+
+    if (parsed.days.length === 0) {
+      return NextResponse.json({
+        error: 'No exercises found in the file. Please check the format.',
+        debug: parsed.debug,
+        hint: 'Expected columns: Exercise (name), Sets, Reps, Weight. Or multiple sheets (one per day).',
+      }, { status: 422 })
+    }
 
     const routine = await createRoutineFromParsed(
       supabase,
@@ -38,7 +59,11 @@ export async function POST(request: NextRequest) {
       routineName ?? undefined
     )
 
-    return NextResponse.json({ routine, daysCount: parsed.days.length }, { status: 201 })
+    return NextResponse.json({
+      routine,
+      daysCount: parsed.days.length,
+      exercisesCount: parsed.days.reduce((s, d) => s + d.exercises.length, 0),
+    }, { status: 201 })
   } catch (err) {
     console.error('Upload error:', err)
     return NextResponse.json(

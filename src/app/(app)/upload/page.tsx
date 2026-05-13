@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, X, Calendar, Hash } from 'lucide-react'
+import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, X, Calendar, Hash, ChevronDown } from 'lucide-react'
 
 export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null)
@@ -11,6 +11,7 @@ export default function UploadPage() {
   const [totalWeeks, setTotalWeeks] = useState(8)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [debugInfo, setDebugInfo] = useState<object | null>(null)
   const [success, setSuccess] = useState(false)
   const [dragging, setDragging] = useState(false)
   const router = useRouter()
@@ -23,9 +24,10 @@ export default function UploadPage() {
     e.preventDefault()
     setDragging(false)
     const dropped = e.dataTransfer.files[0]
-    if (dropped?.name.endsWith('.xlsx') || dropped?.name.endsWith('.xls')) {
+    if (dropped?.name.match(/\.xlsx?$/i)) {
       setFile(dropped)
       setError(null)
+      setDebugInfo(null)
     } else {
       setError('Please drop an Excel file (.xlsx or .xls)')
     }
@@ -37,6 +39,7 @@ export default function UploadPage() {
 
     setLoading(true)
     setError(null)
+    setDebugInfo(null)
 
     const fd = new FormData()
     fd.append('file', file)
@@ -47,14 +50,16 @@ export default function UploadPage() {
     const res = await fetch('/api/routines/upload', { method: 'POST', body: fd })
     const data = await res.json()
 
+    setLoading(false)
+
     if (!res.ok) {
       setError(data.error ?? 'Upload failed')
-      setLoading(false)
+      if (data.debug) setDebugInfo(data.debug)
       return
     }
 
     setSuccess(true)
-    setTimeout(() => router.push('/dashboard'), 1800)
+    setTimeout(() => router.push('/dashboard'), 1600)
   }
 
   if (success) {
@@ -71,25 +76,38 @@ export default function UploadPage() {
 
   return (
     <div className="container page-pad">
-      <header style={{ paddingTop: '1.5rem', marginBottom: '2rem' }}>
-        <h1 style={{ fontSize: '1.75rem', marginBottom: '0.3rem' }}>Import Routine</h1>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-          Upload your gym Excel file to get started
+      <header style={{ paddingTop: '1.5rem', marginBottom: '1.5rem' }}>
+        <h1 style={{ fontSize: '1.65rem', marginBottom: '0.25rem' }}>Import Routine</h1>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
+          Upload your gym Excel file
         </p>
       </header>
 
       {error && (
-        <div className="alert alert-error animate-fade-up" style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <AlertCircle size={16} />{error}
-          </span>
-          <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit' }}>
-            <X size={16} />
-          </button>
+        <div className="alert alert-error animate-fade-up" style={{ marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+            <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+            <div style={{ flex: 1 }}>
+              <p style={{ marginBottom: debugInfo ? '0.5rem' : 0 }}>{error}</p>
+              {debugInfo && (
+                <details style={{ marginTop: '0.5rem' }}>
+                  <summary style={{ cursor: 'pointer', fontSize: '0.75rem', opacity: 0.7 }}>
+                    Debug info (share this to get help)
+                  </summary>
+                  <pre style={{ fontSize: '0.65rem', marginTop: '0.5rem', overflowX: 'auto', whiteSpace: 'pre-wrap', opacity: 0.8 }}>
+                    {JSON.stringify(debugInfo, null, 2)}
+                  </pre>
+                </details>
+              )}
+            </div>
+            <button onClick={() => { setError(null); setDebugInfo(null) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', flexShrink: 0 }}>
+              <X size={15} />
+            </button>
+          </div>
         </div>
       )}
 
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
         {/* Drop zone */}
         <div
           onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
@@ -99,7 +117,7 @@ export default function UploadPage() {
           style={{
             border: `2px dashed ${dragging ? 'var(--accent)' : file ? 'var(--neon-green)' : 'var(--border)'}`,
             borderRadius: 'var(--radius-lg)',
-            padding: '2.5rem 1.5rem',
+            padding: '2rem 1.25rem',
             textAlign: 'center',
             cursor: 'pointer',
             background: dragging ? 'var(--accent-glow)' : file ? '#0f2a1a' : 'var(--bg-card)',
@@ -113,31 +131,29 @@ export default function UploadPage() {
             style={{ display: 'none' }}
             onChange={(e) => {
               const f = e.target.files?.[0]
-              if (f) { setFile(f); setError(null) }
+              if (f) { setFile(f); setError(null); setDebugInfo(null) }
             }}
           />
           {file ? (
             <>
-              <CheckCircle2 size={40} color="var(--neon-green)" style={{ marginBottom: '0.75rem' }} />
-              <p style={{ fontWeight: 700, marginBottom: '0.25rem' }}>{file.name}</p>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                {(file.size / 1024).toFixed(1)} KB · Click to change
+              <CheckCircle2 size={36} color="var(--neon-green)" style={{ marginBottom: '0.6rem' }} />
+              <p style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: '0.2rem' }}>{file.name}</p>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                {(file.size / 1024).toFixed(1)} KB · Tap to change
               </p>
             </>
           ) : (
             <>
-              <FileSpreadsheet size={40} color="var(--text-muted)" style={{ marginBottom: '0.75rem' }} />
-              <p style={{ fontWeight: 700, marginBottom: '0.25rem' }}>Drop your Excel file here</p>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>or tap to browse · .xlsx / .xls</p>
+              <FileSpreadsheet size={36} color="var(--text-muted)" style={{ marginBottom: '0.6rem' }} />
+              <p style={{ fontWeight: 700, fontSize: '0.9rem', marginBottom: '0.2rem' }}>Drop or tap to browse</p>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>.xlsx / .xls</p>
             </>
           )}
         </div>
 
         {/* Routine name */}
         <div>
-          <label htmlFor="routine-name">
-            Routine name <span style={{ color: 'var(--text-muted)', textTransform: 'none', fontWeight: 400 }}>(optional — defaults to sheet name)</span>
-          </label>
+          <label htmlFor="routine-name">Routine name <span style={{ color: 'var(--text-muted)', fontWeight: 400, textTransform: 'none' }}>(optional)</span></label>
           <input
             id="routine-name"
             className="input"
@@ -148,11 +164,11 @@ export default function UploadPage() {
           />
         </div>
 
-        {/* Start date + weeks row */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+        {/* Start date + weeks */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem' }}>
           <div>
             <label htmlFor="start-date" style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-              <Calendar size={12} />Start date
+              <Calendar size={11} />Start date
             </label>
             <input
               id="start-date"
@@ -166,7 +182,7 @@ export default function UploadPage() {
           </div>
           <div>
             <label htmlFor="total-weeks" style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-              <Hash size={12} />Total weeks
+              <Hash size={11} />Total weeks
             </label>
             <input
               id="total-weeks"
@@ -181,24 +197,25 @@ export default function UploadPage() {
           </div>
         </div>
 
-        {/* Expected format hint */}
-        <div className="card" style={{ padding: '1rem', background: 'var(--bg-surface)' }}>
-          <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '0.5rem' }}>
-            📋 Expected Excel format
-          </p>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.7 }}>
-            <p>• <strong style={{ color: 'var(--text-secondary)' }}>Multi-sheet:</strong> Each sheet = one training day (sheet name used as day name)</p>
-            <p>• <strong style={{ color: 'var(--text-secondary)' }}>Single-sheet:</strong> Add a "Day" column to group exercises</p>
-            <p>• Columns: <code style={{ color: 'var(--accent)', background: 'var(--bg-card)', padding: '0 4px', borderRadius: 4 }}>Exercise, Sets, Reps, Weight, Notes</code></p>
+        {/* Format hint – collapsible */}
+        <details style={{ background: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)', padding: '0.75rem 1rem' }}>
+          <summary style={{ cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.4rem', listStyle: 'none' }}>
+            <ChevronDown size={13} /> Expected Excel format
+          </summary>
+          <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)', lineHeight: 1.8, marginTop: '0.6rem' }}>
+            <p>• <strong style={{ color: 'var(--text-secondary)' }}>Multi-sheet:</strong> Each sheet = one training day</p>
+            <p>• <strong style={{ color: 'var(--text-secondary)' }}>Single-sheet:</strong> Use a &quot;Day&quot; column to group exercises</p>
+            <p>• <strong style={{ color: 'var(--text-secondary)' }}>No day column:</strong> All exercises go into one day</p>
+            <p style={{ marginTop: '0.4rem' }}>Columns: <code style={{ color: 'var(--accent)', background: 'var(--bg-card)', padding: '0 4px', borderRadius: 4 }}>Exercise, Sets, Reps, Weight, Notes</code></p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.68rem', marginTop: '0.3rem' }}>Spanish names also work: Ejercicio, Series, Repeticiones, Peso</p>
           </div>
-        </div>
+        </details>
 
         <button
           id="upload-submit"
           type="submit"
           className="btn btn-primary btn-lg btn-full"
           disabled={loading || !file}
-          style={{ marginTop: '0.25rem' }}
         >
           {loading
             ? <><span className="spinner" />Importing…</>
