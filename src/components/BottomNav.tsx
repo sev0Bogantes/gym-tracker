@@ -2,13 +2,14 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { Home, Dumbbell, Upload, History, LogOut } from 'lucide-react'
+import { Home, PlusCircle, Upload, History, LogOut } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 
 const navItems = [
-  { href: '/dashboard', label: 'Home',    Icon: Home },
-  { href: '/upload',    label: 'Import',  Icon: Upload },
-  { href: '/history',   label: 'History', Icon: History },
+  { href: '/dashboard',   label: 'Home',    Icon: Home },
+  { href: '/routine/new', label: 'Create',  Icon: PlusCircle },
+  { href: '/upload',      label: 'Import',  Icon: Upload },
+  { href: '/history',     label: 'History', Icon: History },
 ]
 
 export default function BottomNav() {
@@ -30,7 +31,7 @@ export default function BottomNav() {
           href={href}
           className={`bottom-nav-item ${pathname.startsWith(href) ? 'active' : ''}`}
         >
-          <Icon size={22} />
+          <Icon size={21} />
           <span>{label}</span>
         </Link>
       ))}
@@ -40,7 +41,7 @@ export default function BottomNav() {
         onClick={handleLogout}
         aria-label="Sign out"
       >
-        <LogOut size={22} />
+        <LogOut size={21} />
         <span>Sign out</span>
       </button>
     </nav>
