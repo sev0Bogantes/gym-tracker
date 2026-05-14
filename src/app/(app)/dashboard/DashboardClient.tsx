@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import Link from 'next/link'
 import {
   ChevronDown, ChevronUp, Plus, Minus, Upload,
-  Dumbbell, Calendar, TrendingUp, Check, Zap, Edit2
+  Dumbbell, TrendingUp, Check, Edit2, X, Bell, Trash2
 } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -27,6 +27,7 @@ type RoutineDay = {
   id: string
   day_number: number
   name: string
+  description: string | null
   exercises: Exercise[]
 }
 
@@ -64,6 +65,9 @@ function fmt(val: number): string {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
+// ─── Extra routine entry type ────────────────────────────────────────────────
+type RoutineEntry = { id: string; name: string; sets: number; reps: string; notes: string }
+
 export default function DashboardClient({
   routine,
   currentWeek,
@@ -97,6 +101,64 @@ export default function DashboardClient({
   const [units, setUnits] = useState<Record<string, Unit>>({})
   const [saved, setSaved] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState<Record<string, boolean>>({})
+
+  // ─── Bi-weekly reminder ───────────────────────────────────────────────────
+  const reminderKey = `gym_reminder_dismissed_w${currentWeek}`
+  const showReminder = currentWeek % 2 === 0
+  const [reminderDismissed, setReminderDismissed] = useState(false)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setReminderDismissed(!!sessionStorage.getItem(reminderKey))
+    }
+  }, [reminderKey])
+  function dismissReminder() {
+    sessionStorage.setItem(reminderKey, '1')
+    setReminderDismissed(true)
+  }
+
+  // ─── Pre/Post routine sections ────────────────────────────────────────────
+  const [preEntries, setPreEntries] = useState<RoutineEntry[]>([])
+  const [postEntries, setPostEntries] = useState<RoutineEntry[]>([])
+  const [preExpanded, setPreExpanded] = useState(true)
+  const [postExpanded, setPostExpanded] = useState(true)
+  const [newPre, setNewPre] = useState({ name: '', sets: 3, reps: '15', notes: '' })
+  const [newPost, setNewPost] = useState({ name: '', sets: 1, reps: '20', notes: '' })
+  const [showPreForm, setShowPreForm] = useState(false)
+  const [showPostForm, setShowPostForm] = useState(false)
+
+  useEffect(() => {
+    try {
+      const pre = localStorage.getItem('gym_pre_routine')
+      const post = localStorage.getItem('gym_post_routine')
+      if (pre) setPreEntries(JSON.parse(pre))
+      if (post) setPostEntries(JSON.parse(post))
+    } catch { /* ignore */ }
+  }, [])
+
+  function savePreEntries(entries: RoutineEntry[]) {
+    setPreEntries(entries)
+    localStorage.setItem('gym_pre_routine', JSON.stringify(entries))
+  }
+  function savePostEntries(entries: RoutineEntry[]) {
+    setPostEntries(entries)
+    localStorage.setItem('gym_post_routine', JSON.stringify(entries))
+  }
+  function addPreEntry() {
+    if (!newPre.name.trim()) return
+    const entry: RoutineEntry = { ...newPre, id: crypto.randomUUID() }
+    savePreEntries([...preEntries, entry])
+    setNewPre({ name: '', sets: 3, reps: '15', notes: '' })
+    setShowPreForm(false)
+  }
+  function addPostEntry() {
+    if (!newPost.name.trim()) return
+    const entry: RoutineEntry = { ...newPost, id: crypto.randomUUID() }
+    savePostEntries([...postEntries, entry])
+    setNewPost({ name: '', sets: 1, reps: '20', notes: '' })
+    setShowPostForm(false)
+  }
+  function deletePreEntry(id: string) { savePreEntries(preEntries.filter(e => e.id !== id)) }
+  function deletePostEntry(id: string) { savePostEntries(postEntries.filter(e => e.id !== id)) }
 
   function getUnit(exId: string): Unit {
     return units[exId] ?? 'kg'
@@ -225,27 +287,43 @@ export default function DashboardClient({
         </div>
       </div>
 
-      {/* Stats row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem', marginBottom: '1.5rem' }}>
-        <div className="card" style={{ padding: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <Calendar size={18} color="var(--accent)" style={{ flexShrink: 0 }} />
-          <div>
-            <p style={{ fontSize: '1.2rem', fontWeight: 800 }}>{routine.routine_days.length}</p>
-            <p style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Training Days</p>
-          </div>
+      {/* Bi-weekly reminder banner */}
+      {showReminder && !reminderDismissed && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '0.75rem',
+          background: '#2a1a00', border: '1px solid #f59e0b60',
+          borderRadius: 'var(--radius)', padding: '0.85rem 1rem',
+          marginBottom: '1.25rem',
+        }}>
+          <Bell size={16} color="var(--amber)" style={{ flexShrink: 0 }} />
+          <p style={{ flex: 1, fontSize: '0.82rem', color: 'var(--amber)', lineHeight: 1.4 }}>
+            <strong>Week {currentWeek} reminder</strong> — Time to add <strong>+2 reps</strong> to each exercise!
+          </p>
+          <button
+            onClick={dismissReminder}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--amber)', padding: '0.2rem', flexShrink: 0 }}
+            aria-label="Dismiss reminder"
+          >
+            <X size={14} />
+          </button>
         </div>
-        <div className="card" style={{ padding: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <TrendingUp size={18} color="var(--neon-green)" style={{ flexShrink: 0 }} />
-          <div>
-            <p style={{ fontSize: '1.2rem', fontWeight: 800 }}>
-              {routine.routine_days.reduce((s, d) => s + d.exercises.length, 0)}
-            </p>
-            <p style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Exercises</p>
-          </div>
-        </div>
-      </div>
+      )}
 
-      {/* Days accordion */}
+      {/* Pre-routine (Abs) */}
+      {renderExtraSection({
+        label: '🧘 Pre-Routine · Abs',
+        entries: preEntries,
+        expanded: preExpanded,
+        setExpanded: setPreExpanded,
+        showForm: showPreForm,
+        setShowForm: setShowPreForm,
+        newEntry: newPre,
+        setNewEntry: setNewPre as (v: typeof newPre) => void,
+        onAdd: addPreEntry,
+        onDelete: deletePreEntry,
+      })}
+
+      {/* Main training days */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         {routine.routine_days.map((day) => {
           const isOpen = expandedDays.has(day.id)
@@ -277,22 +355,13 @@ export default function DashboardClient({
                 </div>
 
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontWeight: 700, fontSize: '0.95rem' }}>{day.name}</p>
+                  <p style={{ fontWeight: 700, fontSize: '0.95rem' }}>
+                    {day.name}{day.description ? <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '0.82rem' }}> · {day.description}</span> : null}
+                  </p>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
                     {day.exercises.length} exercise{day.exercises.length !== 1 ? 's' : ''}
                   </p>
                 </div>
-
-                {/* Start workout link */}
-                <Link
-                  href={`/workout/${day.id}`}
-                  onClick={(e) => e.stopPropagation()}
-                  className="btn btn-primary btn-sm"
-                  style={{ flexShrink: 0, fontSize: '0.72rem', padding: '0.35rem 0.7rem' }}
-                >
-                  <Zap size={12} />
-                  Start
-                </Link>
 
                 {isOpen
                   ? <ChevronUp size={16} color="var(--text-muted)" style={{ flexShrink: 0 }} />
@@ -385,23 +454,23 @@ export default function DashboardClient({
 
                                   {/* Sets/Reps inline edit row */}
                                   <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--bg-surface)', padding: '0.3rem 0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
-                                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Sets</span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--bg-surface)', padding: '0.3rem 0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', flexShrink: 0 }}>Sets</span>
                                       <input
                                         type="number"
                                         min={1}
                                         value={sets[ex.id] ?? ex.sets}
                                         onChange={(e) => handleSetChange(ex.id, parseInt(e.target.value) || 1)}
-                                        style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', fontSize: '0.9rem', fontWeight: 600, width: '100%', outline: 'none' }}
+                                        style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', fontSize: '0.9rem', fontWeight: 600, width: 36, outline: 'none', MozAppearance: 'textfield' }}
                                       />
                                     </div>
-                                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--bg-surface)', padding: '0.3rem 0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
-                                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Reps</span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--bg-surface)', padding: '0.3rem 0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', flexShrink: 0 }}>Reps</span>
                                       <input
                                         type="text"
                                         value={reps[ex.id] ?? ex.reps}
                                         onChange={(e) => handleRepChange(ex.id, e.target.value)}
-                                        style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', fontSize: '0.9rem', fontWeight: 600, width: '100%', outline: 'none' }}
+                                        style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', fontSize: '0.9rem', fontWeight: 600, width: 44, outline: 'none' }}
                                       />
                                     </div>
                                   </div>
@@ -510,6 +579,20 @@ export default function DashboardClient({
         })}
       </div>
 
+      {/* Post-routine (Cardio) */}
+      {renderExtraSection({
+        label: '🏃 Post-Routine · Cardio',
+        entries: postEntries,
+        expanded: postExpanded,
+        setExpanded: setPostExpanded,
+        showForm: showPostForm,
+        setShowForm: setShowPostForm,
+        newEntry: newPost,
+        setNewEntry: setNewPost as (v: typeof newPost) => void,
+        onAdd: addPostEntry,
+        onDelete: deletePostEntry,
+      })}
+
       {/* Import new routine link */}
       <div style={{ marginTop: '1.75rem', paddingBottom: '1rem' }}>
         <Link
@@ -537,4 +620,128 @@ function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric',
   })
+}
+
+// ─── Extra section renderer (Pre/Post routine) ────────────────────────────────
+
+type ExtraSectionProps = {
+  label: string
+  entries: { id: string; name: string; sets: number; reps: string; notes: string }[]
+  expanded: boolean
+  setExpanded: (v: boolean) => void
+  showForm: boolean
+  setShowForm: (v: boolean) => void
+  newEntry: { name: string; sets: number; reps: string; notes: string }
+  setNewEntry: (v: { name: string; sets: number; reps: string; notes: string }) => void
+  onAdd: () => void
+  onDelete: (id: string) => void
+}
+
+function renderExtraSection({
+  label, entries, expanded, setExpanded,
+  showForm, setShowForm, newEntry, setNewEntry, onAdd, onDelete,
+}: ExtraSectionProps) {
+  return (
+    <div className="card" style={{ overflow: 'hidden', marginBottom: '0.75rem' }}>
+      {/* Section header */}
+      <button
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: '0.75rem',
+          padding: '0.85rem 1.1rem', background: 'none', border: 'none',
+          cursor: 'pointer', color: 'inherit', fontFamily: 'inherit', textAlign: 'left',
+        }}
+      >
+        <span style={{ flex: 1, fontWeight: 700, fontSize: '0.92rem' }}>{label}</span>
+        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+          {entries.length} exercise{entries.length !== 1 ? 's' : ''}
+        </span>
+        {expanded
+          ? <ChevronUp size={16} color="var(--text-muted)" />
+          : <ChevronDown size={16} color="var(--text-muted)" />}
+      </button>
+
+      {expanded && (
+        <div style={{ borderTop: '1px solid var(--border-subtle)', padding: '0.75rem 1rem' }}>
+          {/* Entry list */}
+          {entries.map((e) => (
+            <div key={e.id} style={{
+              display: 'flex', alignItems: 'center', gap: '0.6rem',
+              padding: '0.5rem 0', borderBottom: '1px solid var(--border-subtle)',
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontWeight: 600, fontSize: '0.88rem' }}>{e.name}</p>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  {e.sets} sets × {e.reps} reps{e.notes ? ` · ${e.notes}` : ''}
+                </p>
+              </div>
+              <button
+                onClick={() => onDelete(e.id)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '0.2rem', flexShrink: 0 }}
+                aria-label="Delete"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+
+          {/* Add form */}
+          {showForm ? (
+            <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <input
+                className="input"
+                placeholder="Exercise name"
+                value={newEntry.name}
+                onChange={(e) => setNewEntry({ ...newEntry, name: e.target.value })}
+                style={{ fontSize: '0.85rem', padding: '0.5rem 0.75rem' }}
+              />
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--bg-surface)', padding: '0.3rem 0.6rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', flexShrink: 0 }}>Sets</span>
+                  <input
+                    type="number" min={1}
+                    value={newEntry.sets}
+                    onChange={(e) => setNewEntry({ ...newEntry, sets: parseInt(e.target.value) || 1 })}
+                    style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', fontSize: '0.9rem', fontWeight: 600, width: 36, outline: 'none' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--bg-surface)', padding: '0.3rem 0.6rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', flexShrink: 0 }}>Reps</span>
+                  <input
+                    type="text"
+                    value={newEntry.reps}
+                    onChange={(e) => setNewEntry({ ...newEntry, reps: e.target.value })}
+                    style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', fontSize: '0.9rem', fontWeight: 600, width: 44, outline: 'none' }}
+                  />
+                </div>
+                <input
+                  className="input"
+                  placeholder="Notes (optional)"
+                  value={newEntry.notes}
+                  onChange={(e) => setNewEntry({ ...newEntry, notes: e.target.value })}
+                  style={{ flex: 1, fontSize: '0.8rem', padding: '0.3rem 0.6rem' }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="btn btn-primary btn-sm" onClick={onAdd} style={{ flex: 1 }}>
+                  <Plus size={14} /> Add
+                </button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setShowForm(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setShowForm(true)}
+              style={{ marginTop: '0.6rem', width: '100%', justifyContent: 'center', gap: '0.4rem', fontSize: '0.78rem' }}
+            >
+              <Plus size={13} /> Add Exercise
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
